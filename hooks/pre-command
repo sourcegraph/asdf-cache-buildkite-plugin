@@ -42,7 +42,7 @@ if aws s3api head-object --bucket "$BUILDKITE_PLUGINS_ASF_CACHE_BUILDKITE_PLUGIN
 else
   echo -e "ASDF 🚨 Cache miss: $cache_key"
   echo "~~~ fresh install of all asdf tool versions"
-  asdf install
+  asdf install 2>&1 | sed -E "s/^/ /" # avoid having asdf output telling buildkite to expand the section because of underlying set -x in scripts
   echo "~~~ cache asdf installation"
   pushd "$HOME" || exit
   bsdtar cfz "$cache_file" .asdf
