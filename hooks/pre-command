@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+
+set -e
+
+# BUILDKITE_PLUGIN_ASDF_CACHE_BUILDKITE_PLUGIN_BUCKET_NAME=""
+# BUILDKITE_PLUGIN_ASDF_CACHE_BUILDKITE_PLUGIN_REGION_NAME=""
+# BUILDKITE_PLUGIN_ASDF_CACHE_BUILDKITE_PLUGIN_DISABLE=""
+
+if [ -n "$BUILDKITE_PLUGIN_ASDF_CACHE_BUILDKITE_PLUGIN_DISABLE" ]; then
+    echo -e "⚠️  ASDF Cache disabled"
+  exit 0
+fi
+
+# We need awscli to use asdf cache
+echo "asdf install from cache"
+asdf install awscli
+echo "done installing awscli"
+
+# set the buildkite cache access keys
+AWS_CONFIG_DIR_PATH="/buildkite/.aws"
+mkdir -p "$AWS_CONFIG_DIR_PATH"
+AWS_CONFIG_FILE="$AWS_CONFIG_DIR_PATH/config"
+export AWS_CONFIG_FILE
+AWS_SHARED_CREDENTIALS_FILE="/buildkite/.aws/credentials"
+export AWS_SHARED_CREDENTIALS_FILE
+aws configure set aws_access_key_id "$BUILDKITE_HMAC_KEY" --profile buildkite
+aws configure set aws_secret_access_key "$BUILDKITE_HMAC_SECRET" --profile buildkite
+
+asdf_checksum=$(sha1sum .tool-versions | awk '{print $1}')
+cache_file="cache-asdf-$asdf_checksum.tar.gz"
+cache_key="$BUILDKITE_ORGANIZATION_SLUG/$BUILDKITE_PIPELINE_NAME/$cache_file"
+
+echo -e "ASDF 🔍 Locating cache: $cache_key"
+if aws s3api head-object --bucket "$BUILDKITE_PLUGIN_ASF_CACHE_BUILDKITE_PLUGIN_BUCKET_NAME" --profile buildkite --endpoint-url 'https://storage.googleapis.com' --region "$BUILDKITE_PLUGIN_ASDF_CACHE_BUILDKITE_PLUGIN_REGION_NAME" --key "$cache_key"; then
+  echo -e "ASDF 🔥 Cache hit: $cache_key"
+  aws s3 cp --profile buildkite --endpoint-url 'https://storage.googleapis.com' --region "$BUILDKITE_PLUGIN_ASDF_CACHE_BUILDKITE_PLUGIN_REGION_NAME" "s3://$BUILDKITE_PLUGIN_ASDF_CACHE_BUILDKITE_PLUGIN_BUCKET_NAME/$cache_key" "$HOME/"
+  pushd "$HOME" || exit
+  rm -rf .asdf
+  bsdtar xzf "$cache_file"
+  popd || exit
+else
+  echo -e "ASDF 🚨 Cache miss: $cache_key"
+  echo "~~~ fresh install of all asdf tool versions"
+  asdf install
+  echo "~~~ cache asdf installation"
+  pushd "$HOME" || exit
+  bsdtar cfz "$cache_file" .asdf
+  popd || exit
+  aws s3 cp --profile buildkite --endpoint-url 'https://storage.googleapis.com' --region "$BUILDKITE_PLUGIN_ASDF_CACHE_BUILDKITE_PLUGIN_REGION_NAME" "$HOME/$cache_file" "s3://$BUILDKITE_PLUGIN_ASDF_CACHE_BUILDKITE_PLUGIN_BUCKET_NAME/$cache_key"
+fi
+
+unset AWS_SHARED_CREDENTIALS_FILE
+unset AWS_CONFIG_FILE
+
+asdf reshim
